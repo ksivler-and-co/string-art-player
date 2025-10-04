@@ -9,10 +9,16 @@ const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/res
 const APP_FOLDER_NAME = 'CodeDisplayApp';
 const STATE_FILE_NAME = 'app-state.json';
 
+// Token storage keys
+const TOKEN_STORAGE_KEY = 'google_access_token';
+const TOKEN_EXPIRY_KEY = 'google_token_expiry';
+const USER_INFO_KEY = 'google_user_info';
+
 class GoogleDriveService {
   constructor() {
     this.tokenClient = null;
     this.accessToken = null;
+    this.tokenExpiry = null;
     this.gapiInited = false;
     this.gisInited = false;
   }
@@ -26,6 +32,10 @@ class GoogleDriveService {
           discoveryDocs: [DISCOVERY_DOC],
         });
         this.gapiInited = true;
+        
+        // Try to restore token from localStorage
+        this.restoreToken();
+        
         resolve(true);
       });
     });
@@ -41,15 +51,78 @@ class GoogleDriveService {
           throw response;
         }
         this.accessToken = response.access_token;
+        
+        // Calculate expiry time (tokens typically last 3600 seconds = 1 hour)
+        const expiresIn = response.expires_in || 3600;
+        this.tokenExpiry = Date.now() + (expiresIn * 1000);
+        
+        // Save token to localStorage
+        this.saveToken();
+        
         if (callback) callback(response);
       },
     });
     this.gisInited = true;
   }
 
+  // Save token to localStorage
+  saveToken() {
+    if (this.accessToken && this.tokenExpiry) {
+      localStorage.setItem(TOKEN_STORAGE_KEY, this.accessToken);
+      localStorage.setItem(TOKEN_EXPIRY_KEY, this.tokenExpiry.toString());
+    }
+  }
+
+  // Restore token from localStorage
+  restoreToken() {
+    const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+    const storedExpiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
+    
+    if (storedToken && storedExpiry) {
+      const expiry = parseInt(storedExpiry);
+      
+      // Check if token is still valid (with 5 minute buffer)
+      if (Date.now() < expiry - (5 * 60 * 1000)) {
+        this.accessToken = storedToken;
+        this.tokenExpiry = expiry;
+        
+        // Set token for gapi client
+        if (this.gapiInited) {
+          window.gapi.client.setToken({ access_token: this.accessToken });
+        }
+        
+        return true;
+      } else {
+        // Token expired, clear it
+        this.clearToken();
+      }
+    }
+    
+    return false;
+  }
+
+  // Clear stored token
+  clearToken() {
+    this.accessToken = null;
+    this.tokenExpiry = null;
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(TOKEN_EXPIRY_KEY);
+    localStorage.removeItem(USER_INFO_KEY);
+  }
+
   // Check if user is signed in
   isSignedIn() {
-    return this.accessToken !== null;
+    // Check if we have a token and it's not expired
+    if (this.accessToken && this.tokenExpiry) {
+      if (Date.now() < this.tokenExpiry - (5 * 60 * 1000)) {
+        return true;
+      } else {
+        // Token expired
+        this.clearToken();
+        return false;
+      }
+    }
+    return false;
   }
 
   // Sign in - Request access token
@@ -68,6 +141,13 @@ class GoogleDriveService {
             return;
           }
           this.accessToken = response.access_token;
+          
+          // Calculate expiry time
+          const expiresIn = response.expires_in || 3600;
+          this.tokenExpiry = Date.now() + (expiresIn * 1000);
+          
+          // Save token
+          this.saveToken();
           
           // Set access token for gapi client
           window.gapi.client.setToken({ access_token: this.accessToken });
@@ -93,41 +173,69 @@ class GoogleDriveService {
       window.google.accounts.oauth2.revoke(this.accessToken, () => {
         console.log('Access token revoked');
       });
-      this.accessToken = null;
+      this.clearToken();
       window.gapi.client.setToken(null);
     }
   }
 
-  // Get current user info (using tokeninfo endpoint)
+  // Get current user info (with caching)
   async getCurrentUser() {
     if (!this.accessToken) return null;
 
+    // Try to get from cache first
+    const cachedUser = localStorage.getItem(USER_INFO_KEY);
+    if (cachedUser) {
+      try {
+        return JSON.parse(cachedUser);
+      } catch (e) {
+        // Invalid cache, continue to fetch
+      }
+    }
+
     try {
-      const response = await fetch(
-        `https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${this.accessToken}`
-      );
-      const data = await response.json();
-      
-      // Get additional user info
       const userInfoResponse = await fetch(
         'https://www.googleapis.com/oauth2/v2/userinfo',
         {
           headers: {
-            Authorization: `Bearer ${this.accessToken}`,
+            'Authorization': `Bearer ${this.accessToken}`,
           },
         }
       );
+
+      if (!userInfoResponse.ok) {
+        throw new Error(`UserInfo request failed: ${userInfoResponse.status}`);
+      }
+
       const userInfo = await userInfoResponse.json();
 
-      return {
+      const user = {
         email: userInfo.email,
         name: userInfo.name,
         imageUrl: userInfo.picture,
+        id: userInfo.id,
       };
+
+      // Cache user info
+      localStorage.setItem(USER_INFO_KEY, JSON.stringify(user));
+
+      return user;
     } catch (error) {
       console.error('Error getting user info:', error);
       return null;
     }
+  }
+
+  // Get cached user info without making API call
+  getCachedUser() {
+    const cachedUser = localStorage.getItem(USER_INFO_KEY);
+    if (cachedUser) {
+      try {
+        return JSON.parse(cachedUser);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
   }
 
   // Create or get app folder
