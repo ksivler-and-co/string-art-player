@@ -146,7 +146,7 @@ const useCodePlayer = () => {
                 }
             };
 
-            const timeoutId = setTimeout(autoSave, 2000); // Debounce auto-save
+            const timeoutId = setTimeout(autoSave, 60000); // Debounce auto-save
             return () => clearTimeout(timeoutId);
         }
     }, [codes, currentIndex, speed, isGoogleSignedIn]);
