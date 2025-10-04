@@ -1,4 +1,10 @@
-const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+const SCOPES = [
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/userinfo.profile',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'openid'
+].join(' ');
+
 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
 const APP_FOLDER_NAME = 'CodeDisplayApp';
 const STATE_FILE_NAME = 'app-state.json';
@@ -157,26 +163,30 @@ class GoogleDriveService {
   }
 
   // Save state to Google Drive
-  async saveState(state) {
-    try {
-      const folderId = await this.getOrCreateAppFolder();
-      const stateJson = JSON.stringify(state, null, 2);
+async saveState(state) {
+  try {
+    const folderId = await this.getOrCreateAppFolder();
+    const stateJson = JSON.stringify(state, null, 2);
 
-      // Check if state file already exists
-      const existingFiles = await window.gapi.client.drive.files.list({
-        q: `name='${STATE_FILE_NAME}' and '${folderId}' in parents and trashed=false`,
-        spaces: 'drive',
-        fields: 'files(id, name)',
-      });
+    // Check if state file already exists
+    const existingFiles = await window.gapi.client.drive.files.list({
+      q: `name='${STATE_FILE_NAME}' and '${folderId}' in parents and trashed=false`,
+      spaces: 'drive',
+      fields: 'files(id, name)',
+    });
 
-      const boundary = 'foo_bar_baz';
-      const delimiter = '\r\n--' + boundary + '\r\n';
-      const closeDelim = '\r\n--' + boundary + '--';
+    const boundary = 'foo_bar_baz';
+    const delimiter = '\r\n--' + boundary + '\r\n';
+    const closeDelim = '\r\n--' + boundary + '--';
 
+    if (existingFiles.result.files && existingFiles.result.files.length > 0) {
+      // Update existing file - DON'T include parents in metadata
+      const fileId = existingFiles.result.files[0].id;
+      
       const metadata = {
         name: STATE_FILE_NAME,
         mimeType: 'application/json',
-        parents: [folderId],
+        // DO NOT include parents field here
       };
 
       const multipartRequestBody =
@@ -188,39 +198,57 @@ class GoogleDriveService {
         stateJson +
         closeDelim;
 
-      let request;
-      if (existingFiles.result.files && existingFiles.result.files.length > 0) {
-        // Update existing file
-        const fileId = existingFiles.result.files[0].id;
-        request = window.gapi.client.request({
-          path: `/upload/drive/v3/files/${fileId}`,
-          method: 'PATCH',
-          params: { uploadType: 'multipart' },
-          headers: {
-            'Content-Type': 'multipart/related; boundary=' + boundary,
-          },
-          body: multipartRequestBody,
-        });
-      } else {
-        // Create new file
-        request = window.gapi.client.request({
-          path: '/upload/drive/v3/files',
-          method: 'POST',
-          params: { uploadType: 'multipart' },
-          headers: {
-            'Content-Type': 'multipart/related; boundary=' + boundary,
-          },
-          body: multipartRequestBody,
-        });
-      }
+      // Use the standard drive API endpoint (not /upload)
+      const request = window.gapi.client.request({
+        path: `/upload/drive/v3/files/${fileId}`,
+        method: 'PATCH',
+        params: { 
+          uploadType: 'multipart',
+          // Don't modify parents on update
+        },
+        headers: {
+          'Content-Type': 'multipart/related; boundary=' + boundary,
+        },
+        body: multipartRequestBody,
+      });
 
       const response = await request;
       return response.result;
-    } catch (error) {
-      console.error('Error saving state:', error);
-      throw error;
+    } else {
+      // Create new file - parents ARE allowed on creation
+      const metadata = {
+        name: STATE_FILE_NAME,
+        mimeType: 'application/json',
+        parents: [folderId], // Parents are allowed on CREATE
+      };
+
+      const multipartRequestBody =
+        delimiter +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(metadata) +
+        delimiter +
+        'Content-Type: application/json\r\n\r\n' +
+        stateJson +
+        closeDelim;
+
+      const request = window.gapi.client.request({
+        path: '/upload/drive/v3/files',
+        method: 'POST',
+        params: { uploadType: 'multipart' },
+        headers: {
+          'Content-Type': 'multipart/related; boundary=' + boundary,
+        },
+        body: multipartRequestBody,
+      });
+
+      const response = await request;
+      return response.result;
     }
+  } catch (error) {
+    console.error('Error saving state:', error);
+    throw error;
   }
+}
 
   // Load state from Google Drive
   async loadState() {
