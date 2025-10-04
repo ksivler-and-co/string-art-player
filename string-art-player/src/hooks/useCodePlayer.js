@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import googleDriveService from '../services/googleDriveService';
+import googleAuth from '../services/googleAuthService';
 
 const useCodePlayer = () => {
     const [codes, setCodes] = useState([]);
@@ -23,24 +24,22 @@ const useCodePlayer = () => {
                         clearInterval(checkScriptsLoaded);
 
                         // Initialize GAPI (this will restore token if available)
-                        googleDriveService.initializeGapi().then(() => {
+                        googleAuth.initializeGapi().then(() => {
                             // Initialize GIS
-                            googleDriveService.initializeGis();
+                            googleAuth.initializeGis();
                             setServicesReady(true);
 
                             // Check if user is already signed in (from restored token)
-                            const isSignedIn = googleDriveService.isSignedIn();
-                            setIsGoogleSignedIn(isSignedIn);
-
-                            if (isSignedIn) {
+                            const isSignedIn = googleAuth.isSignedIn();
+                            setIsGoogleSignedIn(isSignedIn); if (isSignedIn) {
                                 // Get cached user info
-                                const cachedUser = googleDriveService.getCachedUser();
+                                const cachedUser = googleAuth.getCachedUser();
                                 if (cachedUser) {
                                     setGoogleUser(cachedUser);
                                     setStatus('Signed in to Google Drive (restored session)');
                                 } else {
                                     // Fetch fresh user info
-                                    googleDriveService.getCurrentUser().then((user) => {
+                                    googleAuth.getCurrentUser().then((user) => {
                                         setGoogleUser(user);
                                         setStatus('Signed in to Google Drive (restored session)');
                                     });
@@ -221,11 +220,11 @@ const useCodePlayer = () => {
         }
 
         try {
-            await googleDriveService.signIn();
+            await googleAuth.signIn();
             setIsGoogleSignedIn(true);
 
             // Get user info
-            const user = await googleDriveService.getCurrentUser();
+            const user = await googleAuth.getCurrentUser();
             setGoogleUser(user);
             setStatus('Signed in to Google Drive');
         } catch (error) {
@@ -236,7 +235,7 @@ const useCodePlayer = () => {
 
     const signOutFromGoogle = useCallback(async () => {
         try {
-            await googleDriveService.signOut();
+            await googleAuth.signOut();
             setIsGoogleSignedIn(false);
             setGoogleUser(null);
             setStatus('Signed out from Google Drive');
