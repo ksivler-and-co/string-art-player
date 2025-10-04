@@ -15,7 +15,7 @@ const SpeedControl = ({ speed, onSpeedChange }) => {
         id="speedSlider"
         className="speed-slider"
         min="100"
-        max="4000"
+        max="8000"
         value={speed}
         step="100"
         onChange={handleSpeedChange}
